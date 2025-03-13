@@ -1,11 +1,11 @@
 #include <stdio.h>
 
-extern "C" void myPrintfFunction();
+extern "C" void myPrintfFunction(int a, const char* b);
 
 int main() {
     printf("Hello world\n");
 
-    myPrintfFunction();
+    myPrintfFunction(58, "hello");
 
     return 0;
 }
