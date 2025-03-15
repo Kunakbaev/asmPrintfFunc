@@ -1,5 +1,8 @@
 global myPrintfFunction
 
+extern printf
+extern atexit
+
 section .data
     MAX_FORMAT_STR_BUFF_LEN     equ 100
     MAX_TMP_BUFF_LEN            equ 100
@@ -11,6 +14,9 @@ section .data
     STRING_FORMAT_STRING        equ 's'
     FORMAT_STRING_DELIM         equ '%'
     ERROR_EXIT_CODE             equ 228
+    TRUE_STRING_LEN             equ 4
+    FALSE_STRING_LEN            equ 5
+    MAX_OUTPUT_BUFFER_LEN       equ 10
 
     tmpStringBuff               db MAX_TMP_BUFF_LEN dup(0)
     formatStringBuff            db MAX_FORMAT_STR_BUFF_LEN dup(0)
@@ -18,9 +24,10 @@ section .data
     errorMessageLen             equ 24
     newLine                     db 10
     trueString                  db "true"
-    trueStringLen               equ 4
     falseString                 db "false"
-    falseStringLen              equ 5
+
+    outputBufferString          db MAX_OUTPUT_BUFFER_LEN dup(0)
+    numOfCharsInOutputBuffer    dd 0
 
 
 
@@ -38,31 +45,81 @@ exitProgrammWithError:
 
 ; entry: RDX - string len
 ;        RSI - address of source string
-;
-myPrint:
+clearAndOutputBuffer:
     push rdi
+    push rsi
+    push rdx
+    push rax
+
+;     mov rax, 0x01 ; syscall index of standard output function
+;     mov rdi, 1    ; file descriptor for stdout
+;     mov rsi, trueString
+;     mov rdx, TRUE_STRING_LEN
+;
+;     syscall
+
+
+
     mov rax, 0x01 ; syscall index of standard output function
     mov rdi, 1    ; file descriptor for stdout
+    mov rsi, outputBufferString
+
+    mov rdx, [numOfCharsInOutputBuffer] ; len of buffer
+    ; numOfCharsInOutputBuffer = 0
+    mov word [numOfCharsInOutputBuffer], 0
 
     syscall
+    pop rax
+    pop rdx
+    pop rsi
     pop rdi
     ret
 
-printNewLine:
-    mov rdx, 1
-    mov rsi, newLine
-    call myPrint
+; entry: AL - char to add
+addChar2Buffer:
+    push rdi
+    push rax
+    push rbx
+    push rcx
+
+    xor rbx, rbx
+    mov rdi, outputBufferString
+    mov ebx, [numOfCharsInOutputBuffer]
+    add rdi, rbx
+    stosb
+    ; inc
+
+    mov eax, [numOfCharsInOutputBuffer]
+    inc eax
+    mov dword [numOfCharsInOutputBuffer], eax
+
+    cmp eax, MAX_OUTPUT_BUFFER_LEN
+    jne notYetTimeToFlush
+        call clearAndOutputBuffer
+    notYetTimeToFlush:
+
+    pop rcx ; ASK: who did change rcx?
+    pop rbx
+    pop rax
+    pop rdi
     ret
 
-showErrorMessage:
-    mov rsi, errorMessage
-    mov rdx, errorMessageLen
+; printNewLine:
+;     mov rdx, 1
+;     mov rsi, newLine
+;     call myPrint
+;     ret
 
-    call myPrint
-    call exitProgrammWithError
+; showErrorMessage:
+;     mov rsi, errorMessage
+;     mov rdx, errorMessageLen
+;
+;     call myPrint
+;     call exitProgrammWithError
+;
+;     ret
 
-    ret
-
+; we consider that base is <= 255
 ; entry: RBX base
 ;        RAX number
 printNumberInSomeBase:
@@ -71,32 +128,32 @@ printNumberInSomeBase:
     push rax
     push rdi
 
-    mov rdi, tmpStringBuff
     xor rcx, rcx
-
     digitLoop:
         xor rdx, rdx
         div rbx ; reminder to edx
         push rax
         mov rax, rdx
 
-        cmp rax, 10
+        cmp ax, 10
         jl reminderIsDigit
-            add rax, 'A' - 10
+            add ax, 'A' - 10
             jmp reminderIsDigitIfEnd
         reminderIsDigit:
-            add rax, '0'
+            add ax, '0'
         reminderIsDigitIfEnd:
-        stosb
+        mov dx, ax
         pop rax
+        push dx
 
         inc rcx
         cmp rax, 0
         jne digitLoop
 
-    mov rdx, rcx
-    mov rsi, tmpStringBuff
-    call myPrint
+    digitOutputLoop:
+        pop ax
+        call addChar2Buffer
+        loop digitOutputLoop
 
     pop rdi
     pop rax
@@ -106,13 +163,7 @@ printNumberInSomeBase:
 
 ; ENTRY: al - char to print
 printSingleChar:
-    push rdi
-    mov rdi, tmpStringBuff
-    stosb
-    mov rsi, tmpStringBuff
-    mov rdx, 1
-    call myPrint
-    pop rdi
+    call addChar2Buffer
     ret
 
 ; ENTRY: rax - address of a string
@@ -136,7 +187,7 @@ printString:
     ; call printNumberInSomeBase
 
     pop rsi ; restore string address
-    call myPrint
+    ; call myPrint
 
     pop rdi
     pop rsi
@@ -149,14 +200,14 @@ printBoolean:
 
     cmp rax, 1
     je valIsTrue
-        mov rdx, falseStringLen
+        mov rdx, FALSE_STRING_LEN
         mov rsi, falseString
-        call myPrint
+        ;call myPrint
         jmp valIsTrueIfEnd
     valIsTrue:
-        mov rdx, trueStringLen
+        mov rdx, TRUE_STRING_LEN
         mov rsi, trueString
-        call myPrint
+        ;call myPrint
     valIsTrueIfEnd:
 
     pop rdx
@@ -165,6 +216,15 @@ printBoolean:
 
 ; System V calling convention (first 6 args are passed through registers and remaining are put to the stack)
 myPrintfFunction:
+    ;and rsp,-16
+    ; push rdi
+    ; ;sub rsp, 8
+    ; mov rdi, trueString
+    ; call printf
+    ; ;add rsp, 8
+    ; pop rdi
+    ; ;ret
+
     ; For now function only accepts arguments of INTEGER types (addresses, chars, ints)
     ; each argument is rounded up to 8 bytes
     ; arguments are put to registers in that order: RDI, RSI, RDX, RCX, R8, R9
@@ -174,6 +234,13 @@ myPrintfFunction:
     push rdx
     push rsi
     push rdi
+
+    ; calling C function atexit, to set function that will be called at the end
+    ; ASK: how does it work? what if my function overwrites smth important?
+    sub rsp, 8
+    mov rdi, clearAndOutputBuffer
+    call atexit
+    add rsp, 8
 
     call myPrintfFunctionCdeclFormat
 
@@ -193,6 +260,13 @@ myPrintfFunctionCdeclFormat:
     mov rdi, 1
     mov rsi, [rbp + 8 * rdi]
     inc rdi ; current argument index
+
+    ; mov rax, 0x01 ; syscall index of standard output function
+    ; mov rdi, 1
+    ; syscall
+
+    ; pop rbp
+    ; ret
 
     formatStringCharsLoop:
         ; ASK: how to fix this?
@@ -258,6 +332,7 @@ myPrintfFunctionCdeclFormat:
                 call printBoolean
                 jmp switchCaseEnd
             charTypeCase:
+                ; mov al, '?'
                 call printSingleChar
                 jmp switchCaseEnd
             stringTypeCase:
@@ -270,6 +345,9 @@ myPrintfFunctionCdeclFormat:
 
         jmp formatStringCharsLoop
     formatStringLoopEnd:
+
+    ; TODO:
+    ; call clearAndOutputBuffer
 
     pop rbp
     ret

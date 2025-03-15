@@ -21,7 +21,7 @@ compileAsm: building
 	$(ASM_COMPILER) -o $(ASM_OBJ_NAME) $(ASM_PRINTF_SRC) $(ASM_ARGS)
 
 compile: compileAsm
-	$(CC) -o $(BUILD_DIR)/$(TARGET_NAME) $(MAIN_SRC) $(ASM_OBJ_NAME)
+	$(CC) -no-pie -o $(BUILD_DIR)/$(TARGET_NAME) $(MAIN_SRC) $(ASM_OBJ_NAME)
 
 run:
 	$(BUILD_DIR)/$(TARGET_NAME)
