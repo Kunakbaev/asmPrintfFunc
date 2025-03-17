@@ -20,6 +20,7 @@ section .data
     MAX_ARG_STRING_LEN               equ 100
     SYSCALL_EXIT_FUNC_IND            equ 0x3C
     SYSCALL_STANDART_OUTPUT_FUNC_IND equ 0x01
+    MAX_NUMBER_STR_REPR_LEN          equ 64
 
 
     tmpStringBuff                    db MAX_TMP_BUFF_LEN dup(0)
@@ -103,61 +104,73 @@ addChar2Buffer:
     pop rdi
     ret
 
-; printNewLine:
-;     mov rdx, 1
-;     mov rsi, newLine
-;     call myPrint
-;     ret
-
-; showErrorMessage:
-;     mov rsi, errorMessage
-;     mov rdx, errorMessageLen
-;
-;     call myPrint
-;     call exitProgrammWithError
-;
-;     ret
-
-; we consider that base is <= 255
-; entry: RBX base
+; entry: BL - base shift (which power of 2)
+;        BH - mask (to take bitwise mod)
 ;        RAX number
-printNumberInSomeBase:
-    push rcx
-    push rdx
-    push rax
-    push rdi
+printNumberInBaseOfPower2:
+    ; allocate memory for local buffer in stack
+    enter MAX_NUMBER_STR_REPR_LEN, 0
 
     xor rcx, rcx
+    digitLoopPower2Func:
+        ; ASK: ?
+        mov rdx, rax
+        and dl, bh
+        add dl, '0'
+        cmp dl, '0' + 10
+        jl decimalDigit ; in case if base is 16 and we can have a digit >= 10
+            add dl, 'A' - '0' - 10
+        decimalDigit:
+        dec rbp
+        mov [rbp], byte dl
+
+        mov rdx, rcx
+        xor cl, cl
+        mov cl, bl
+        shr rax, cl
+        mov rcx, rdx
+
+        inc rcx
+        cmp rax, 0
+        jne digitLoopPower2Func
+
+    digitOutputLoopPower2Func:
+        mov al, byte [rbp]
+        inc rbp
+        call addChar2Buffer
+        loop digitOutputLoopPower2Func
+
+    ; free allocated memory
+    leave
+    ret
+
+; entry: RAX number
+printNumberInDecimalBase:
+    ; allocate memory for local buffer in stack
+    enter MAX_NUMBER_STR_REPR_LEN, 0
+
+    xor rcx, rcx
+    mov rbx, 10
     digitLoop:
         xor rdx, rdx
         div rbx ; reminder to edx
-        push rax
-        mov rax, rdx
 
-        cmp ax, 10
-        jl reminderIsDigit
-            add ax, 'A' - 10
-            jmp reminderIsDigitIfEnd
-        reminderIsDigit:
-            add ax, '0'
-        reminderIsDigitIfEnd:
-        mov dx, ax
-        pop rax
-        push dx
+        add dl, '0'
+        dec rbp
+        mov [rbp], byte dl
 
         inc rcx
         cmp rax, 0
         jne digitLoop
 
     digitOutputLoop:
-        pop ax
+        mov al, byte [rbp]
+        inc rbp
         call addChar2Buffer
         loop digitOutputLoop
 
-    pop rdi
-    pop rax
-    pop rdx
-    pop rcx
+    ; free allocated memory
+    leave
     ret
 
 ; entry: AL - char to print
@@ -225,25 +238,6 @@ printString:
     pop rsi
     ret
 
-; entry: RAX - variable
-printBoolean:
-    push rsi
-    push rdx
-
-    cmp rax, 1
-    je valIsTrue
-        mov rax, falseString
-        call printString
-        jmp valIsTrueIfEnd
-    valIsTrue:
-        mov rax, trueString
-        call printString
-    valIsTrueIfEnd:
-
-    pop rdx
-    pop rsi
-    ret
-
 ; System V calling convention (first 6 args are passed through registers and remaining are put to the stack)
 myPrintfFunction:
     ; For now function only accepts arguments of INTEGER types (addresses, chars, ints)
@@ -262,11 +256,12 @@ myPrintfFunction:
     ; ASK: how does it work? what if my function overwrites smth important?
     sub rsp, 8
     mov rdi, clearAndOutputBuffer
-    call atexit
+    call atexit ; attribute destructor attribute
     add rsp, 8
 
     call myPrintfFunctionCdeclFormat
 
+    ; TODO: переписать на трамплин
     pop rdi
     pop rsi
     pop rdx
@@ -321,7 +316,7 @@ myPrintfFunctionCdeclFormat:
             cmp bl, DECIMAL_FORMAT_STRING
             je decimalBaseCase
             cmp bl, BOOL_FORMAT_STRING
-            je booleanTypeCase
+            je binaryTypeCase
             cmp bl, CHAR_FORMAT_STRING
             je charTypeCase
             cmp bl, STRING_FORMAT_STRING
@@ -333,19 +328,35 @@ myPrintfFunctionCdeclFormat:
                 call printSingleChar
                 jmp switchCaseEnd
             hexademicalBaseCase:
-                mov rbx, 16
-                call printNumberInSomeBase
+                mov bx, 0f4h
+                mov bh, 15
+                mov bl, 4
+                call printNumberInBaseOfPower2
                 jmp switchCaseEnd
             octalBaseCase:
-                mov rbx, 8
-                call printNumberInSomeBase
+                mov bx, 73h ; shift 3 and mask = 2 ^ 3 - 1 = 7
+                mov bh, 7 ; ASK: why doesn't bx=... work?
+                mov bl, 3
+                call printNumberInBaseOfPower2
                 jmp switchCaseEnd
             decimalBaseCase:
+                cmp rax, 0
+                jge positiveNumber ; in case if number is negative
+                    push rax
+                    mov al, '-'
+                    call addChar2Buffer
+                    pop rax
+                    neg rax
+                positiveNumber:
+
                 mov rbx, 10
-                call printNumberInSomeBase
+                call printNumberInDecimalBase
                 jmp switchCaseEnd
-            booleanTypeCase:
-                call printBoolean
+            binaryTypeCase:
+                mov bx, 00010001b ; shift 1 and mask = 2 ^ 1 - 1 = 1
+                mov bh, 1
+                mov bl, 1
+                call printNumberInBaseOfPower2
                 jmp switchCaseEnd
             charTypeCase:
                 ; mov al, '?'
