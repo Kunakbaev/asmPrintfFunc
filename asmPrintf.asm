@@ -22,15 +22,7 @@ section .data
     SYSCALL_STANDART_OUTPUT_FUNC_IND equ 0x01
     MAX_NUMBER_STR_REPR_LEN          equ 64
 
-
-    tmpStringBuff                    db MAX_TMP_BUFF_LEN dup(0)
-    formatStringBuff                 db MAX_FORMAT_STR_BUFF_LEN dup(0)
-    ; errorMessage                     db "Some error has occured(", 10
-    ; errorMessageLen                  equ 24
-    newLine                          db 10
-    trueString                       db "true", 0
-    falseString                      db "false", 0
-
+    isMyPrintfFunctionLoaded         db 0
     outputBufferString               db MAX_OUTPUT_BUFFER_LEN dup(0)
     numOfCharsInOutputBuffer         dd 0 ; double word
 
@@ -238,6 +230,29 @@ printString:
     pop rsi
     ret
 
+; we need to call this function only once, first time when our printf func is called
+loadMyPrintfFunction:
+    ; calling C function atexit, to set handler that will be called at the end of C programm
+    ;sub rsp, 8
+    ; WARNING: stack address (rsp) should be divisble by 16
+    mov rdi, clearAndOutputBuffer
+    ; mov rax, rsp
+    ; call printNumberInDecimalBase
+    ; mov al, '!'
+    ; call printSingleChar
+
+    push r10
+    ;sub rsp, 8
+    call atexit ; attribute destructor attribute
+    ;add rsp, 8
+    pop r10
+
+    ; mov rax, rsp
+    ; call printNumberInDecimalBase
+    ; call outputBufferString
+
+    ret
+
 ; System V calling convention (first 6 args are passed through registers and remaining are put to the stack)
 myPrintfFunction:
     ; For now function only accepts arguments of INTEGER types (addresses, chars, ints)
@@ -245,6 +260,8 @@ myPrintfFunction:
     ; arguments are put to registers in that order: RDI, RSI, RDX, RCX, R8, R9
     ; if there are more arguments, they are passed through stack in RTL (right to left order)
     ; so last argument is pushed first
+    pop r10 ; save callback address
+
     push r9
     push r8
     push rcx
@@ -252,40 +269,20 @@ myPrintfFunction:
     push rsi
     push rdi
 
-    ; calling C function atexit, to set handler that will be called at the end of C programm
-    ; ASK: how does it work? what if my function overwrites smth important?
-    sub rsp, 8
-    mov rdi, clearAndOutputBuffer
-    call atexit ; attribute destructor attribute
-    add rsp, 8
+    cmp [isMyPrintfFunctionLoaded], byte 1
+    je myFuncIsAlreadyLoaded
+        call loadMyPrintfFunction
+        mov [isMyPrintfFunctionLoaded], byte 1
+    myFuncIsAlreadyLoaded:
 
-    call myPrintfFunctionCdeclFormat
-
+    ; ASK: is it ok that I pop arguments that were given to me?
+    jmp myPrintfFunctionCdeclFormat
     ; TODO: переписать на трамплин
-    pop rdi
-    pop rsi
-    pop rdx
-    pop rcx
-    pop r8
-    pop r9
-
-    ret
 
 myPrintfFunctionCdeclFormat:
-    push rbp
-    mov rbp, rsp
-    add rbp, 8
-    mov rdi, 1
-    mov rsi, [rbp + 8 * rdi] ; load format string (first argument of printf)
-    inc rdi ; current argument index
+    pop rsi ; load format string (first argument of printf)
 
-    formatStringCharsLoop:
-        ; ASK: how to fix this?
-        cmp rdi, 7
-        jne notArgumentGap ; skip argument gap
-            inc rdi
-        notArgumentGap:
-
+    formatStringCharsLoop
         xor eax, eax
         lodsb
         cmp al, 0
@@ -302,8 +299,8 @@ myPrintfFunctionCdeclFormat:
             lodsb ; read another symbol
             mov bl, al
 
-            mov rax, [rbp + 8 * rdi]
-            inc rdi
+            pop rax
+            inc r8
 
             push rsi
             ; switch on format type
@@ -323,7 +320,7 @@ myPrintfFunctionCdeclFormat:
             je stringTypeCase
 
             percentCase:
-                dec rdi
+                dec r8
                 mov al, '%'
                 call printSingleChar
                 jmp switchCaseEnd
@@ -373,8 +370,6 @@ myPrintfFunctionCdeclFormat:
         jmp formatStringCharsLoop
     formatStringLoopEnd:
 
-    ; call clearAndOutputBuffer
-
-    pop rbp
+    push r10
     ret
 
