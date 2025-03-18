@@ -20,11 +20,13 @@ section .data
     MAX_ARG_STRING_LEN               equ 100
     SYSCALL_EXIT_FUNC_IND            equ 0x3C
     SYSCALL_STANDART_OUTPUT_FUNC_IND equ 0x01
+    STDOUT_FILE_DESCR_ID             equ 1
     MAX_NUMBER_STR_REPR_LEN          equ 64
 
+    hexDigitsString                  db "0123456789ABCDEF"
     isMyPrintfFunctionLoaded         db 0
     outputBufferString               db MAX_OUTPUT_BUFFER_LEN dup(0)
-    numOfCharsInOutputBuffer         dd 0 ; double word
+    numOfCharsInOutputBuffer         dq 0 ; quad word
 
 
 
@@ -33,94 +35,78 @@ section .data
 
 section .text
 
-exitProgrammWithError:
-    mov eax, SYSCALL_EXIT_FUNC_IND
-    mov ebx, ERROR_EXIT_CODE
-
-    syscall
-    ret ; ???
-
 ; entry: RSI - address of entry string
+;        RDX - string len
+; exit : none
+; destr: RAX, RDI, non calee save registers that are destroyed in syscall
 printGivenString:
     mov rax, SYSCALL_STANDART_OUTPUT_FUNC_IND ; syscall index of standard output function
-    mov rdi, 1    ; file descriptor for stdout
+    push r11
+    mov rdi, STDOUT_FILE_DESCR_ID    ; file descriptor for stdout
     syscall
+    pop r11
     ret
 
+; flushes buffer, sets it's len = 0 (R11 = 0)
 ; entry: RDX - string len
-;        RSI - address of source string
+;        R11 - number of chars in buffer
+; exit : none
+; destr: R11, RDX + destr in printGivenString
 clearAndOutputBuffer:
-    push rdi
-    push rsi
-    push rdx
-    push rax
-
-    mov rdx, [numOfCharsInOutputBuffer] ; len of buffer
-    ; numOfCharsInOutputBuffer = 0
-    mov word [numOfCharsInOutputBuffer], 0
+    mov rdx, r11
+    xor r11, r11 ; r11 = 0, num of chars in buffer = 0
 
     mov rsi, outputBufferString
     call printGivenString
 
-    pop rax
-    pop rdx
-    pop rsi
-    pop rdi
     ret
 
-; entry: AL - char to add
+;
+; entry: AL  - char to add
+;        R11 - number of chars in output buffer
+; exit :
+; destr: RAX, RBX, R11, RDI
 addChar2Buffer:
-    push rdi
-    push rax
-    push rbx
     push rcx
 
     xor rbx, rbx
     mov rdi, outputBufferString
-    mov ebx, [numOfCharsInOutputBuffer]
-    add rdi, rbx
+    add rdi, r11
     stosb
+    inc r11
 
-    mov eax, [numOfCharsInOutputBuffer]
-    inc eax
-    mov dword [numOfCharsInOutputBuffer], eax
-
-    cmp eax, MAX_OUTPUT_BUFFER_LEN
+    cmp r11, MAX_OUTPUT_BUFFER_LEN
     jne notYetTimeToFlush
         call clearAndOutputBuffer
     notYetTimeToFlush:
 
-    pop rcx ; ASK: what did change rcx?
-    pop rbx
-    pop rax
-    pop rdi
+    pop rcx
     ret
 
+; prints number representation in some base (which is power of 2) to a buffer
 ; entry: BL - base shift (which power of 2)
 ;        BH - mask (to take bitwise mod)
 ;        RAX number
+; exit : none
+; destr: RAX, RCX, RDX
 printNumberInBaseOfPower2:
     ; allocate memory for local buffer in stack
     enter MAX_NUMBER_STR_REPR_LEN, 0
 
     xor rcx, rcx
     digitLoopPower2Func:
-        ; ASK: ?
         mov rdx, rax
         and dl, bh
-        add dl, '0'
-        cmp dl, '0' + 10
-        jl decimalDigit ; in case if base is 16 and we can have a digit >= 10
-            add dl, 'A' - '0' - 10
-        decimalDigit:
+        movsx rdx, dl
+        mov dl, [hexDigitsString + rdx]
+
         dec rbp
         mov [rbp], byte dl
 
-        mov rdx, rcx
-        xor cl, cl
+        mov rdx, rcx ; save loop counter
         mov cl, bl
-        shr rax, cl
-        mov rcx, rdx
+        shr rax, cl  ; divide by base (/= 2 ^ shift same as >>= shift)
+        mov rcx, rdx ; restore loop counter
 
         inc rcx
         cmp rax, 0
@@ -136,13 +122,16 @@ printNumberInBaseOfPower2:
     leave
     ret
 
+; prints decimal representation of a number to an output buffer
 ; entry: RAX number
+; exit : none
+; destr: RAX, RBX, RCX, RDX + destr in addChar2Buff
 printNumberInDecimalBase:
     ; allocate memory for local buffer in stack
     enter MAX_NUMBER_STR_REPR_LEN, 0
 
     xor rcx, rcx
-    mov rbx, 10
+    mov rbx, 10 ; decimal base is 10
     digitLoop:
         xor rdx, rdx
         div rbx ; reminder to edx
@@ -166,6 +155,8 @@ printNumberInDecimalBase:
     ret
 
 ; entry: AL - char to print
+; exit : none
+; destr: destr of addChar2Buffer
 printSingleChar:
     call addChar2Buffer
     ret
@@ -173,22 +164,22 @@ printSingleChar:
 ; considers that there's enough space for a string in the buffer
 ; entry: RSI - string memory address
 ;        RCX - string len
+;        R11 - number of chars in buffer
+; exit : none
+; destr: RAX, RCX, RSI, RDI, R11
 addString2Buffer:
-    xor rax, rax
-    mov eax, [numOfCharsInOutputBuffer]
     mov rdi, outputBufferString
-    add rdi, rax
-    add rax, rcx
-    mov [numOfCharsInOutputBuffer], eax
+    add rdi, r11
+    add r11, rcx
     rep movsb
 
     ret
 
 ; entry: RAX - address of a string
+;        R11 - number of chars in buffer
+; exit : none
+; destr: RAX, RBX, RCX, RDX, RSI, RDI
 printString:
-    push rsi
-    push rdi
-
     ; find string len
     push rax ; save string address
     xor rdx, rdx ; rdx = 0
@@ -198,22 +189,29 @@ printString:
     mov rcx, MAX_ARG_STRING_LEN ; max string len
     mov al, 0
     repne scasb ; search for terminating char
-    add rdx, rdi
+    add rdx, rdi ; RDX stores arg string len
 
     pop rsi ; restore string address
     mov rbx, MAX_OUTPUT_BUFFER_LEN
-    sub rbx, rcx ; calculate left space in buffer
-
+    sub rbx, r11 ; calculate left space in buffer
 
     ; 3 cases (based on left space in output buffer and string len):
     ; 1) if there's enough space for a string in the buffer, we just add it to the buffer
     ; 2) there's not enough space for a string in the buffer, but it still can fit in it,
     ;    so first, we flush the buffer and then add string to it
     ; 3) string is too long, to fit even in empty buffer, so we just straight ahead output it
-    cmp rbx, rcx
+
+    ; RDX stores arg string len
+    ; RBX stores left space in buffer
+    cmp rbx, rdx
     jge wholeStringInBuffer
         cmp rcx, MAX_OUTPUT_BUFFER_LEN
+        push rdx
+        push rsi
         call clearAndOutputBuffer
+        pop rsi
+        pop rdx
+
         jge outputWholeStringAtOnce
             call addString2Buffer
             jmp outputWholeStringAtOnceIfEnd
@@ -226,33 +224,29 @@ printString:
         call addString2Buffer
     wholeStringInBufferIfEnd:
 
-    pop rdi
-    pop rsi
     ret
 
+; load function, sets it to be called during atexit func
+; this way buffer is cleared
 ; we need to call this function only once, first time when our printf func is called
+; Entry: none
+; Exit : none
+; Destr: RDI and some registers that are destructed by atexit (which ???)
 loadMyPrintfFunction:
     ; calling C function atexit, to set handler that will be called at the end of C programm
-    ;sub rsp, 8
     ; WARNING: stack address (rsp) should be divisble by 16
     mov rdi, clearAndOutputBuffer
-    ; mov rax, rsp
-    ; call printNumberInDecimalBase
-    ; mov al, '!'
-    ; call printSingleChar
-
     push r10
-    ;sub rsp, 8
+    sub rsp, 8
     call atexit ; attribute destructor attribute
-    ;add rsp, 8
+    add rsp, 8
     pop r10
 
-    ; mov rax, rsp
-    ; call printNumberInDecimalBase
-    ; call outputBufferString
+    mov [numOfCharsInOutputBuffer], dword 0
 
     ret
 
+; trampoline to main printf function, prepares arguments
 ; System V calling convention (first 6 args are passed through registers and remaining are put to the stack)
 myPrintfFunction:
     ; For now function only accepts arguments of INTEGER types (addresses, chars, ints)
@@ -262,6 +256,7 @@ myPrintfFunction:
     ; so last argument is pushed first
     pop r10 ; save callback address
 
+    ; push first 6 arguments to stack (in right to left order)
     push r9
     push r8
     push rcx
@@ -269,20 +264,26 @@ myPrintfFunction:
     push rsi
     push rdi
 
+    push r10
+
     cmp [isMyPrintfFunctionLoaded], byte 1
     je myFuncIsAlreadyLoaded
         call loadMyPrintfFunction
         mov [isMyPrintfFunctionLoaded], byte 1
     myFuncIsAlreadyLoaded:
 
+    mov r11, [numOfCharsInOutputBuffer]
     ; ASK: is it ok that I pop arguments that were given to me?
     jmp myPrintfFunctionCdeclFormat
-    ; TODO: переписать на трамплин
 
+; main printf function
+; Entry: arguments are passed through stack
+; Exit : none
 myPrintfFunctionCdeclFormat:
+    pop r10 ; save callback address
     pop rsi ; load format string (first argument of printf)
 
-    formatStringCharsLoop
+    formatStringCharsLoop:
         xor eax, eax
         lodsb
         cmp al, 0
@@ -299,8 +300,8 @@ myPrintfFunctionCdeclFormat:
             lodsb ; read another symbol
             mov bl, al
 
+            ; get new func argument from stack
             pop rax
-            inc r8
 
             push rsi
             ; switch on format type
@@ -320,20 +321,19 @@ myPrintfFunctionCdeclFormat:
             je stringTypeCase
 
             percentCase:
-                dec r8
+                pop rsi
+                push rax ; cringe
+                push rsi
+
                 mov al, '%'
                 call printSingleChar
                 jmp switchCaseEnd
             hexademicalBaseCase:
-                mov bx, 0f4h
-                mov bh, 15
-                mov bl, 4
+                mov bx, 0f04h
                 call printNumberInBaseOfPower2
                 jmp switchCaseEnd
             octalBaseCase:
-                mov bx, 73h ; shift 3 and mask = 2 ^ 3 - 1 = 7
-                mov bh, 7 ; ASK: why doesn't bx=... work?
-                mov bl, 3
+                mov bx, 703h ; shift 3 and mask = 2 ^ 3 - 1 = 7
                 call printNumberInBaseOfPower2
                 jmp switchCaseEnd
             decimalBaseCase:
@@ -350,13 +350,10 @@ myPrintfFunctionCdeclFormat:
                 call printNumberInDecimalBase
                 jmp switchCaseEnd
             binaryTypeCase:
-                mov bx, 00010001b ; shift 1 and mask = 2 ^ 1 - 1 = 1
-                mov bh, 1
-                mov bl, 1
+                mov bx, 101h ; shift 1 and mask = 2 ^ 1 - 1 = 1
                 call printNumberInBaseOfPower2
                 jmp switchCaseEnd
             charTypeCase:
-                ; mov al, '?'
                 call printSingleChar
                 jmp switchCaseEnd
             stringTypeCase:
@@ -369,6 +366,9 @@ myPrintfFunctionCdeclFormat:
 
         jmp formatStringCharsLoop
     formatStringLoopEnd:
+
+    ; save buffer len to memory, so that on the next call it will be valid
+    mov [numOfCharsInOutputBuffer], r11
 
     push r10
     ret

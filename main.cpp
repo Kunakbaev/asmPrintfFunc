@@ -14,13 +14,13 @@ int main() {
     myPrintfFunction("decimal : %d, octal : %o, hex : %x, oct: %o\n", 228, 192291, 3802, 19);
     myPrintfFunction("be : %x\n", 3802);
 
-    // int number = 256;
-    // char chacha = '#';
-    // const char iAmString[] = "\"i am very long string\"";
-    // bool flag = true;
-    // myPrintfFunction("decimal number: %d, hex: %x, octal: %o, char: %c, string: %s, binary: %b\n %d %s %x %d%%%c%b\n",
-    //                     number, number, number, chacha, iAmString, flag,
-    //                     -1, "love", 3802, 100, 33, 126);
+    int number = 256;
+    char chacha = '#';
+    const char iAmString[] = "\"i am very long string\"";
+    bool flag = true;
+    myPrintfFunction("decimal number: %d, hex: %x, octal: %o, char: %c, string: %s, binary: %b\n %d %s %x %d%%%c%b\n",
+                        number, number, number, chacha, iAmString, flag,
+                        -1, "love", 3802, 100, 33, 126);
     //myPrintfFunction("%d : 10, %x, s: %s after, %cd, boolean : %b\n", 10, 183, "sk!dsafd", '?', false);
     //myPrintfFunction("num : %d, bruh\n", 2882);
     //myPrintfFunction("number number");
