@@ -1,2 +1,5 @@
 .vscode
 building
+test
+test.asm
+test.o

@@ -6,14 +6,8 @@ extern atexit
 section .data
     MAX_FORMAT_STR_BUFF_LEN          equ 100
     MAX_TMP_BUFF_LEN                 equ 100
-    DECIMAL_FORMAT_STRING            equ 'd'
-    BOOL_FORMAT_STRING               equ 'b'
-    OCTAL_FORMAT_STRING              equ 'o'
-    HEX_FORMAT_STRING                equ 'x'
-    CHAR_FORMAT_STRING               equ 'c'
-    STRING_FORMAT_STRING             equ 's'
-    FORMAT_STRING_DELIM              equ '%'
     ERROR_EXIT_CODE                  equ 228
+    FORMAT_STRING_DELIM              equ '%'
     TRUE_STRING_LEN                  equ 4
     FALSE_STRING_LEN                 equ 5
     MAX_OUTPUT_BUFFER_LEN            equ 10
@@ -27,6 +21,23 @@ section .data
     isMyPrintfFunctionLoaded         db 0
     outputBufferString               db MAX_OUTPUT_BUFFER_LEN dup(0)
     numOfCharsInOutputBuffer         dq 0 ; quad word
+
+    ;const equ formatsCharSwitchEnd-formatsCharSwitchTable
+    %define SPACE_FILLER dup(formatsCharSwitchEnd-formatsCharSwitchTable)
+    formatsCharSwitchTable           dd                  \
+        percentCase-formatsCharSwitchTable,              \
+        'b'-'%'-1 SPACE_FILLER,                          \
+        binaryBaseCase-formatsCharSwitchTable,           \
+        charTypeCase-formatsCharSwitchTable,             \
+        decimalBaseCase-formatsCharSwitchTable,          \
+        'o'-'d'-1 SPACE_FILLER,                          \
+        octalBaseCase-formatsCharSwitchTable,            \
+        's'-'o'-1 SPACE_FILLER,                          \
+        stringTypeCase-formatsCharSwitchTable,           \
+        'x'-'s'-1 SPACE_FILLER,                          \
+        hexademicalBaseCase-formatsCharSwitchTable       \
+    ; print([ord(ch) for ch in sorted("xdo%bsc")])
+    ; [37, 98, 99, 100, 111, 115, 120]
 
 
 
@@ -298,27 +309,16 @@ myPrintfFunctionCdeclFormat:
         validFormatDelimeter:
             xor rax, rax
             lodsb ; read another symbol
-            mov bl, al
+            sub rax, '%'
 
-            ; get new func argument from stack
-            pop rax
-
-            push rsi
             ; switch on format type
-            cmp bl, FORMAT_STRING_DELIM
-            je percentCase
-            cmp bl, HEX_FORMAT_STRING
-            je hexademicalBaseCase
-            cmp bl, OCTAL_FORMAT_STRING
-            je octalBaseCase
-            cmp bl, DECIMAL_FORMAT_STRING
-            je decimalBaseCase
-            cmp bl, BOOL_FORMAT_STRING
-            je binaryTypeCase
-            cmp bl, CHAR_FORMAT_STRING
-            je charTypeCase
-            cmp bl, STRING_FORMAT_STRING
-            je stringTypeCase
+            lea rdx, [formatsCharSwitchTable]
+            movsxd rbx, dword [formatsCharSwitchTable + rax * 4]
+            add rbx, rdx
+
+            pop rax ; get new func argument from stack
+            push rsi
+            jmp rbx ; TODO: add check for an invalid type specificator (< '%' or > 's')
 
             percentCase:
                 pop rsi
@@ -327,15 +327,15 @@ myPrintfFunctionCdeclFormat:
 
                 mov al, '%'
                 call printSingleChar
-                jmp switchCaseEnd
+                jmp formatsCharSwitchEnd
             hexademicalBaseCase:
-                mov bx, 0f04h
+                mov bx, 0f04h ; shift 4 (/=16) and mask = 2 ^ 4 - 1 = 15 = f (in hex)
                 call printNumberInBaseOfPower2
-                jmp switchCaseEnd
+                jmp formatsCharSwitchEnd
             octalBaseCase:
                 mov bx, 703h ; shift 3 and mask = 2 ^ 3 - 1 = 7
                 call printNumberInBaseOfPower2
-                jmp switchCaseEnd
+                jmp formatsCharSwitchEnd
             decimalBaseCase:
                 cmp rax, 0
                 jge positiveNumber ; in case if number is negative
@@ -348,18 +348,18 @@ myPrintfFunctionCdeclFormat:
 
                 mov rbx, 10
                 call printNumberInDecimalBase
-                jmp switchCaseEnd
-            binaryTypeCase:
+                jmp formatsCharSwitchEnd
+            binaryBaseCase:
                 mov bx, 101h ; shift 1 and mask = 2 ^ 1 - 1 = 1
                 call printNumberInBaseOfPower2
-                jmp switchCaseEnd
+                jmp formatsCharSwitchEnd
             charTypeCase:
                 call printSingleChar
-                jmp switchCaseEnd
+                jmp formatsCharSwitchEnd
             stringTypeCase:
                 call printString
-                jmp switchCaseEnd
-            switchCaseEnd:
+                jmp formatsCharSwitchEnd
+            formatsCharSwitchEnd:
 
             pop rsi
         validFormatDelimIfEnd:

@@ -11,8 +11,10 @@ int main() {
     // uint64_t x = -1;
     // printf("octal : %llo\n\n\n", x);
 
+    //myPrintfFunction("biba i boba, num : %d\n", 10);
+
     myPrintfFunction("decimal : %d, octal : %o, hex : %x, oct: %o\n", 228, 192291, 3802, 19);
-    myPrintfFunction("be : %x\n", 3802);
+    myPrintfFunction("be : %e\n", 3802);
 
     int number = 256;
     char chacha = '#';
