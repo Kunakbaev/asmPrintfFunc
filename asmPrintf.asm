@@ -3,41 +3,40 @@ global myPrintfFunction
 extern printf
 extern atexit
 
-section .data
-    MAX_FORMAT_STR_BUFF_LEN          equ 100
-    MAX_TMP_BUFF_LEN                 equ 100
-    ERROR_EXIT_CODE                  equ 228
-    FORMAT_STRING_DELIM              equ '%'
-    TRUE_STRING_LEN                  equ 4
-    FALSE_STRING_LEN                 equ 5
-    MAX_OUTPUT_BUFFER_LEN            equ 10
-    MAX_ARG_STRING_LEN               equ 100
-    SYSCALL_EXIT_FUNC_IND            equ 0x3C
-    SYSCALL_STANDART_OUTPUT_FUNC_IND equ 0x01
-    STDOUT_FILE_DESCR_ID             equ 1
-    MAX_NUMBER_STR_REPR_LEN          equ 64
+MAX_FORMAT_STR_BUFF_LEN          equ 100
+MAX_TMP_BUFF_LEN                 equ 100
+ERROR_EXIT_CODE                  equ 228
+FORMAT_STRING_DELIM              equ '%'
+TRUE_STRING_LEN                  equ 4
+FALSE_STRING_LEN                 equ 5
+MAX_OUTPUT_BUFFER_LEN            equ 10
+MAX_ARG_STRING_LEN               equ -1
+SYSCALL_EXIT_FUNC_IND            equ 0x3C
+SYSCALL_STANDART_OUTPUT_FUNC_IND equ 0x01
+STDOUT_FILE_DESCR_ID             equ 1
+MAX_NUMBER_STR_REPR_LEN          equ 64
 
-    hexDigitsString                  db "0123456789ABCDEF"
+; read only data
+section .rodata
+    hexDigitsString              db "0123456789ABCDEF"
+    ;const equ formatsCharSwitchEnd-formatsCharSwitchTable
+    %define JMP_TB_START formatsCharSwitchTable
+    formatsCharSwitchTable:
+        dd binaryBaseCase-JMP_TB_START,
+        dd charTypeCase-JMP_TB_START,
+        dd decimalBaseCase-JMP_TB_START,
+        dd 'o'-'d'-1 dup(formatsCharSwitchEnd-JMP_TB_START),
+        dd octalBaseCase-JMP_TB_START,
+        dd 's'-'o'-1 dup(formatsCharSwitchEnd-JMP_TB_START),
+        dd stringTypeCase-JMP_TB_START,
+        dd 'x'-'s'-1 dup(formatsCharSwitchEnd-JMP_TB_START),
+        dd hexademicalBaseCase-JMP_TB_START
+
+; read and write access to data
+section .data
     isMyPrintfFunctionLoaded         db 0
     outputBufferString               db MAX_OUTPUT_BUFFER_LEN dup(0)
     numOfCharsInOutputBuffer         dq 0 ; quad word
-
-    ;const equ formatsCharSwitchEnd-formatsCharSwitchTable
-    %define SPACE_FILLER dup(formatsCharSwitchEnd-formatsCharSwitchTable)
-    formatsCharSwitchTable           dd                  \
-        percentCase-formatsCharSwitchTable,              \
-        'b'-'%'-1 SPACE_FILLER,                          \
-        binaryBaseCase-formatsCharSwitchTable,           \
-        charTypeCase-formatsCharSwitchTable,             \
-        decimalBaseCase-formatsCharSwitchTable,          \
-        'o'-'d'-1 SPACE_FILLER,                          \
-        octalBaseCase-formatsCharSwitchTable,            \
-        's'-'o'-1 SPACE_FILLER,                          \
-        stringTypeCase-formatsCharSwitchTable,           \
-        'x'-'s'-1 SPACE_FILLER,                          \
-        hexademicalBaseCase-formatsCharSwitchTable       \
-    ; print([ord(ch) for ch in sorted("xdo%bsc")])
-    ; [37, 98, 99, 100, 111, 115, 120]
 
 
 
@@ -167,14 +166,15 @@ printNumberInDecimalBase:
 
 ; considers that there's enough space for a string in the buffer
 ; entry: RSI - string memory address
-;        RCX - string len
+;        RDX - string len
 ;        R11 - number of chars in buffer
 ; exit : none
 ; destr: RAX, RCX, RSI, RDI, R11
 addString2Buffer:
     mov rdi, outputBufferString
     add rdi, r11
-    add r11, rcx
+    add r11, rdx
+    mov rcx, rdx
     rep movsb
 
     jmp wholeStringInBufferIfEnd
@@ -194,6 +194,7 @@ printString:
     mov al, 0
     repne scasb ; search for terminating char
     add rdx, rdi ; RDX stores arg string len
+    dec rdx
 
     pop rsi ; restore string address
     mov rbx, MAX_OUTPUT_BUFFER_LEN
@@ -208,14 +209,14 @@ printString:
     ; RDX stores arg string len
     ; RBX stores left space in buffer
     cmp rbx, rdx
-    jge wholeStringInBuffer
-        cmp rcx, MAX_OUTPUT_BUFFER_LEN
+    jg wholeStringInBuffer
         push rdx
         push rsi
         call clearAndOutputBuffer
         pop rsi
         pop rdx
 
+        cmp rdx, MAX_OUTPUT_BUFFER_LEN
         jge outputWholeStringAtOnce
             jmp addString2Buffer ; after func immediately jumps to wholeStringInBufferIfEnd
         outputWholeStringAtOnce:
@@ -301,22 +302,22 @@ myPrintfFunctionCdeclFormat:
         validFormatDelimeter:
             xor rax, rax
             lodsb ; read another symbol
-            sub rax, '%'
 
-            ; switch on format type
-            lea rdx, [formatsCharSwitchTable]
-            movsxd rbx, dword [formatsCharSwitchTable + rax * 4]
+            cmp rax, '%'
+            je percentCase
+
+            ;switch on format type
+            lea rdx, [JMP_TB_START]
+            movsxd rbx, dword [JMP_TB_START + rax * 4 - 4 * 'b']
             add rbx, rdx
+            ; rel of label??
 
             pop rax ; get new func argument from stack
             push rsi
-            jmp rbx ; TODO: add check for an invalid type specificator (< '%' or > 's')
+            jmp rbx ; TODO: add check for an invalid type specificator (< 'b' or > 's')
 
             percentCase:
-                pop rsi
-                push rax ; cringe
                 push rsi
-
                 mov al, '%'
                 call addChar2Buffer
                 jmp formatsCharSwitchEnd
@@ -326,6 +327,10 @@ myPrintfFunctionCdeclFormat:
                 jmp formatsCharSwitchEnd
             octalBaseCase:
                 mov bx, 703h ; shift 3 and mask = 2 ^ 3 - 1 = 7
+                call printNumberInBaseOfPower2
+                jmp formatsCharSwitchEnd
+            binaryBaseCase:
+                mov bx, 101h ; shift 1 and mask = 2 ^ 1 - 1 = 1
                 call printNumberInBaseOfPower2
                 jmp formatsCharSwitchEnd
             decimalBaseCase:
@@ -340,10 +345,6 @@ myPrintfFunctionCdeclFormat:
 
                 mov rbx, 10
                 call printNumberInDecimalBase
-                jmp formatsCharSwitchEnd
-            binaryBaseCase:
-                mov bx, 101h ; shift 1 and mask = 2 ^ 1 - 1 = 1
-                call printNumberInBaseOfPower2
                 jmp formatsCharSwitchEnd
             charTypeCase:
                 call addChar2Buffer
