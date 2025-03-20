@@ -22,7 +22,7 @@ int main() {
     bool flag = true;
     myPrintfFunction("decimal number: %d, hex: %x, octal: %o, char: %c, string: %s, binary: %b\n %d %s %x %d%%%c%b\n",
                         number, number, number, chacha, iAmString, flag,
-                        -1, "love", 3802, 100, 33, 126);
+                        -1, "loveskksksks", 3802, 100, 33, 126); // 57050
     //myPrintfFunction("%d : 10, %x, s: %s after, %cd, boolean : %b\n", 10, 183, "sk!dsafd", '?', false);
     //myPrintfFunction("num : %d, bruh\n", 2882);
     //myPrintfFunction("number number");

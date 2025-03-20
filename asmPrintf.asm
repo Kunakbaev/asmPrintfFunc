@@ -165,13 +165,6 @@ printNumberInDecimalBase:
     leave
     ret
 
-; entry: AL - char to print
-; exit : none
-; destr: destr of addChar2Buffer
-printSingleChar:
-    call addChar2Buffer
-    ret
-
 ; considers that there's enough space for a string in the buffer
 ; entry: RSI - string memory address
 ;        RCX - string len
@@ -184,7 +177,7 @@ addString2Buffer:
     add r11, rcx
     rep movsb
 
-    ret
+    jmp wholeStringInBufferIfEnd
 
 ; entry: RAX - address of a string
 ;        R11 - number of chars in buffer
@@ -224,18 +217,16 @@ printString:
         pop rdx
 
         jge outputWholeStringAtOnce
-            call addString2Buffer
-            jmp outputWholeStringAtOnceIfEnd
+            jmp addString2Buffer ; after func immediately jumps to wholeStringInBufferIfEnd
         outputWholeStringAtOnce:
             call printGivenString
-        outputWholeStringAtOnceIfEnd:
-        jmp wholeStringInBufferIfEnd
+            jmp wholeStringInBufferIfEnd
     wholeStringInBuffer:
         ; store whole string into the buffer
-        call addString2Buffer
+        jmp addString2Buffer ; after func immediately jumps to wholeStringInBufferIfEnd
     wholeStringInBufferIfEnd:
 
-    ret
+    jmp formatsCharSwitchEnd
 
 ; load function, sets it to be called during atexit func
 ; this way buffer is cleared
@@ -248,14 +239,14 @@ loadMyPrintfFunction:
     ; WARNING: stack address (rsp) should be divisble by 16
     mov rdi, clearAndOutputBuffer
     push r10
-    sub rsp, 8
+    ;sub rsp, 8
     call atexit ; attribute destructor attribute
-    add rsp, 8
+    ;add rsp, 8
     pop r10
 
     mov [numOfCharsInOutputBuffer], dword 0
 
-    ret
+    jmp loadMyPrintfFunctionEnd
 
 ; trampoline to main printf function, prepares arguments
 ; System V calling convention (first 6 args are passed through registers and remaining are put to the stack)
@@ -279,7 +270,8 @@ myPrintfFunction:
 
     cmp [isMyPrintfFunctionLoaded], byte 1
     je myFuncIsAlreadyLoaded
-        call loadMyPrintfFunction
+        jmp loadMyPrintfFunction
+        loadMyPrintfFunctionEnd:
         mov [isMyPrintfFunctionLoaded], byte 1
     myFuncIsAlreadyLoaded:
 
@@ -303,7 +295,7 @@ myPrintfFunctionCdeclFormat:
         cmp al, FORMAT_STRING_DELIM
         je validFormatDelimeter
             push rsi
-            call printSingleChar
+            call addChar2Buffer
             pop rsi
             jmp validFormatDelimIfEnd
         validFormatDelimeter:
@@ -326,7 +318,7 @@ myPrintfFunctionCdeclFormat:
                 push rsi
 
                 mov al, '%'
-                call printSingleChar
+                call addChar2Buffer
                 jmp formatsCharSwitchEnd
             hexademicalBaseCase:
                 mov bx, 0f04h ; shift 4 (/=16) and mask = 2 ^ 4 - 1 = 15 = f (in hex)
@@ -354,11 +346,10 @@ myPrintfFunctionCdeclFormat:
                 call printNumberInBaseOfPower2
                 jmp formatsCharSwitchEnd
             charTypeCase:
-                call printSingleChar
+                call addChar2Buffer
                 jmp formatsCharSwitchEnd
             stringTypeCase:
-                call printString
-                jmp formatsCharSwitchEnd
+                jmp printString
             formatsCharSwitchEnd:
 
             pop rsi
